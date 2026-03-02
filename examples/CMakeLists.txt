@@ -12,8 +12,22 @@ macro(ncnn_add_example name)
     set_property(TARGET ${name} PROPERTY FOLDER "examples")
 endmacro()
 
+macro(ncnn_add_example_nocv name)
+    add_executable(${name} ${name}.cpp)
+    target_link_libraries(${name} PRIVATE ncnn)
+
+    # add test to a virtual project group
+    set_property(TARGET ${name} PROPERTY FOLDER "examples")
+endmacro()
+
 if(NCNN_PIXEL)
+    include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../src)
+    include_directories(${CMAKE_CURRENT_BINARY_DIR}/../src)
+
+    ncnn_add_example_nocv(ppocrv5_nocv)
+
     if(NOT NCNN_SIMPLEOCV)
+    
         find_package(OpenCV QUIET COMPONENTS opencv_world)
         # for opencv 2.4 on ubuntu 16.04, there is no opencv_world but OpenCV_FOUND will be TRUE
         if("${OpenCV_LIBS}" STREQUAL "")
@@ -39,8 +53,6 @@ if(NCNN_PIXEL)
             endif()
         endif()
 
-        include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../src)
-        include_directories(${CMAKE_CURRENT_BINARY_DIR}/../src)
         ncnn_add_example(arcface)
         ncnn_add_example(squeezenet)
         ncnn_add_example(squeezenet_c_api)

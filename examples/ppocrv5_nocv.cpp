@@ -1,0 +1,556 @@
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+
+#include "layer.h"
+#include "net.h"
+
+#include "ppocrv5_dict.h"
+#define STB_IMAGE_IMPLEMENTATION
+#include "stb_image.h"
+
+#ifdef min
+#undef min
+#endif
+#ifdef max
+#undef max
+#endif
+
+#include <algorithm>
+#include <math.h>
+#include <stdio.h>
+#include <string>
+#include <string.h>
+#include <vector>
+
+// One decoded token from the recognizer output sequence.
+struct Character
+{
+    int id;
+    float prob;
+};
+
+// Text region description in image space.
+// (cx, cy): region center
+// (w, h): box size used for recognition crop (w = short side, h = long side)
+// u/v: orthonormal axes of oriented rectangle
+struct Object
+{
+    float cx;
+    float cy;
+    float w;
+    float h;
+    float ux;
+    float uy;
+    float vx;
+    float vy;
+    float angle;
+    int orientation;
+    float prob;
+    std::vector<Character> text;
+};
+
+static inline int clamp_int(int v, int lo, int hi)
+{
+    return std::max(lo, std::min(v, hi));
+}
+
+// Bilinear sampler on RGB image. Coordinates are clamped to image border,
+// matching the border-replicate behavior used by the OpenCV path.
+static inline unsigned char sample_bilinear_channel(const unsigned char* rgb, int img_w, int img_h, float x, float y, int c)
+{
+    x = std::max(0.f, std::min(x, (float)(img_w - 1)));
+    y = std::max(0.f, std::min(y, (float)(img_h - 1)));
+
+    int x0 = (int)floorf(x);
+    int y0 = (int)floorf(y);
+    int x1 = std::min(x0 + 1, img_w - 1);
+    int y1 = std::min(y0 + 1, img_h - 1);
+
+    float dx = x - x0;
+    float dy = y - y0;
+
+    const unsigned char* p00 = rgb + ((size_t)y0 * img_w + x0) * 3 + c;
+    const unsigned char* p01 = rgb + ((size_t)y0 * img_w + x1) * 3 + c;
+    const unsigned char* p10 = rgb + ((size_t)y1 * img_w + x0) * 3 + c;
+    const unsigned char* p11 = rgb + ((size_t)y1 * img_w + x1) * 3 + c;
+
+    float v0 = p00[0] * (1.f - dx) + p01[0] * dx;
+    float v1 = p10[0] * (1.f - dx) + p11[0] * dx;
+    float v = v0 * (1.f - dy) + v1 * dy;
+
+    return (unsigned char)clamp_int((int)roundf(v), 0, 255);
+}
+
+// CTC greedy decoding:
+// - argmax over classes for each timestep
+// - collapse repeated tokens
+// - skip blank index (0)
+static int decode_ctc_text(const ncnn::Mat& out, std::vector<Character>& text)
+{
+    if (out.empty())
+        return -1;
+
+    int last_token = 0;
+
+    for (int i = 0; i < out.h; i++)
+    {
+        const float* p = out.row(i);
+
+        int index = 0;
+        float max_score = -9999.f;
+        for (int j = 0; j < out.w; j++)
+        {
+            float score = *p++;
+            if (score > max_score)
+            {
+                max_score = score;
+                index = j;
+            }
+        }
+
+        if (last_token == index)
+            continue;
+
+        last_token = index;
+
+        if (index <= 0)
+            continue;
+
+        Character ch;
+        ch.id = index - 1;
+        ch.prob = max_score;
+        text.push_back(ch);
+    }
+
+    return 0;
+}
+
+// Crop text region into recognizer input canvas (target_h=48) using oriented sampling.
+// This replaces OpenCV warpAffine/warpPerspective with explicit per-pixel mapping.
+static int get_rotate_crop_image(const unsigned char* rgb, int img_w, int img_h, const Object& object, std::vector<unsigned char>& crop_rgb, int& crop_w, int& crop_h)
+{
+    const int target_height = 48;
+    const float rw = std::max(object.w, 1.f);
+    const float rh = std::max(object.h, 1.f);
+    const int target_width = std::max(32, std::min(640, (int)roundf(rh * target_height / rw)));
+
+    crop_w = target_width;
+    crop_h = target_height;
+
+    if (crop_w <= 1 || crop_h <= 1)
+        return -1;
+
+    crop_rgb.resize((size_t)crop_w * crop_h * 3, 0);
+
+    // Destination pixel (x,y) -> source image coordinate using object local axes.
+    for (int y = 0; y < crop_h; y++)
+    {
+        float v = ((y + 0.5f) / crop_h - 0.5f) * object.w;
+        for (int x = 0; x < crop_w; x++)
+        {
+            float u = ((x + 0.5f) / crop_w - 0.5f) * object.h;
+
+            float sx = object.cx + object.ux * u + object.vx * v;
+            float sy = object.cy + object.uy * u + object.vy * v;
+
+            unsigned char* dst = crop_rgb.data() + ((size_t)y * crop_w + x) * 3;
+            dst[0] = sample_bilinear_channel(rgb, img_w, img_h, sx, sy, 0);
+            dst[1] = sample_bilinear_channel(rgb, img_w, img_h, sx, sy, 1);
+            dst[2] = sample_bilinear_channel(rgb, img_w, img_h, sx, sy, 2);
+        }
+    }
+
+    return 0;
+}
+
+class PPOCRv5
+{
+public:
+    void init();
+
+    void detect(const unsigned char* rgb, int img_w, int img_h, std::vector<Object>& objects);
+
+    void recognize(const unsigned char* rgb, int img_w, int img_h, Object& object);
+
+protected:
+    ncnn::Net ppocrv5_det;
+    ncnn::Net ppocrv5_rec;
+};
+
+void PPOCRv5::init()
+{
+    // no-OpenCV build keeps Vulkan off by default for wider compatibility.
+    ppocrv5_det.opt.use_vulkan_compute = false;
+    ppocrv5_det.load_param("PP_OCRv5_mobile_det.ncnn.param");
+    ppocrv5_det.load_model("PP_OCRv5_mobile_det.ncnn.bin");
+
+    ppocrv5_rec.opt.use_vulkan_compute = false;
+    ppocrv5_rec.load_param("PP_OCRv5_mobile_rec.ncnn.param");
+    ppocrv5_rec.load_model("PP_OCRv5_mobile_rec.ncnn.bin");
+}
+
+void PPOCRv5::detect(const unsigned char* rgb, int img_w, int img_h, std::vector<Object>& objects)
+{
+    // Keep detector input behavior aligned with ppocrv5.cpp:
+    // resize + stride letterbox + identical normalization.
+    const int target_size = 960;
+    const int target_stride = 32;
+
+    int w = img_w;
+    int h = img_h;
+    float scale = 1.f;
+    if (std::max(w, h) > target_size)
+    {
+        if (w > h)
+        {
+            scale = (float)target_size / w;
+            w = target_size;
+            h = (int)(h * scale);
+        }
+        else
+        {
+            scale = (float)target_size / h;
+            h = target_size;
+            w = (int)(w * scale);
+        }
+    }
+
+    ncnn::Mat in = ncnn::Mat::from_pixels_resize(rgb, ncnn::Mat::PIXEL_RGB2BGR, img_w, img_h, w, h);
+
+    int wpad = (w + target_stride - 1) / target_stride * target_stride - w;
+    int hpad = (h + target_stride - 1) / target_stride * target_stride - h;
+    ncnn::Mat in_pad;
+    ncnn::copy_make_border(in, in_pad, hpad / 2, hpad - hpad / 2, wpad / 2, wpad - wpad / 2, ncnn::BORDER_CONSTANT, 114.f);
+
+    const float mean_vals[3] = {0.485f * 255.f, 0.456f * 255.f, 0.406f * 255.f};
+    const float norm_vals[3] = {1 / 0.229f / 255.f, 1 / 0.224f / 255.f, 1 / 0.225f / 255.f};
+    in_pad.substract_mean_normalize(mean_vals, norm_vals);
+
+    ncnn::Extractor ex = ppocrv5_det.create_extractor();
+    ex.input("in0", in_pad);
+
+    ncnn::Mat out;
+    ex.extract("out0", out);
+
+    const float denorm_vals[1] = {255.f};
+    out.substract_mean_normalize(0, denorm_vals);
+
+    const float threshold = 0.3f;
+    const float box_thresh = 0.6f;
+    const float enlarge_ratio = 1.95f;
+    const float min_size = 3 * scale;
+    const int max_candidates = 1000;
+
+    const int map_w = out.w;
+    const int map_h = out.h;
+
+    // Detector out0 is probability map in [0,1], converted to [0,255] above.
+    std::vector<unsigned char> pred((size_t)map_w * map_h, 0);
+    out.to_pixels(pred.data(), ncnn::Mat::PIXEL_GRAY);
+
+    // Threshold map to bitmap, then run connected components to get candidates.
+    std::vector<unsigned char> bitmap((size_t)map_w * map_h, 0);
+    for (int y = 0; y < map_h; y++)
+    {
+        const unsigned char* p = pred.data() + (size_t)y * map_w;
+        unsigned char* b = bitmap.data() + (size_t)y * map_w;
+        for (int x = 0; x < map_w; x++)
+        {
+            b[x] = p[x] > threshold * 255.f ? 1 : 0;
+        }
+    }
+
+    std::vector<int> visited((size_t)map_w * map_h, 0);
+    std::vector<int> q;
+    q.reserve((size_t)map_w * map_h / 4);
+
+    int candidates = 0;
+    for (int y = 0; y < map_h && candidates < max_candidates; y++)
+    {
+        for (int x = 0; x < map_w && candidates < max_candidates; x++)
+        {
+            size_t idx = (size_t)y * map_w + x;
+            if (!bitmap[idx] || visited[idx])
+                continue;
+
+            candidates++;
+            q.clear();
+            q.push_back((int)idx);
+            visited[idx] = 1;
+
+            int qhead = 0;
+            int minx = x;
+            int miny = y;
+            int maxx = x;
+            int maxy = y;
+            float score_sum = 0.f;
+            int score_count = 0;
+
+            while (qhead < (int)q.size())
+            {
+                int cur = q[qhead++];
+                int cy = cur / map_w;
+                int cx = cur - cy * map_w;
+
+                minx = std::min(minx, cx);
+                miny = std::min(miny, cy);
+                maxx = std::max(maxx, cx);
+                maxy = std::max(maxy, cy);
+
+                score_sum += pred[(size_t)cy * map_w + cx];
+                score_count++;
+
+                const int nx4[4] = {cx - 1, cx + 1, cx, cx};
+                const int ny4[4] = {cy, cy, cy - 1, cy + 1};
+                for (int k = 0; k < 4; k++)
+                {
+                    int nx = nx4[k];
+                    int ny = ny4[k];
+                    if (nx < 0 || nx >= map_w || ny < 0 || ny >= map_h)
+                        continue;
+
+                    size_t nidx = (size_t)ny * map_w + nx;
+                    if (!bitmap[nidx] || visited[nidx])
+                        continue;
+
+                    visited[nidx] = 1;
+                    q.push_back((int)nidx);
+                }
+            }
+
+            if (score_count == 0)
+                continue;
+
+            float score = score_sum / score_count / 255.f;
+            if (score < box_thresh)
+                continue;
+
+            float aabb_w = (float)(maxx - minx + 1);
+            float aabb_h = (float)(maxy - miny + 1);
+            float maxwh = std::max(aabb_w, aabb_h);
+            if (maxwh < min_size)
+                continue;
+
+            const int n = score_count;
+
+            // Compute principal direction (PCA) from foreground pixels.
+            // This approximates minAreaRect orientation without OpenCV.
+            double sumx = 0.0;
+            double sumy = 0.0;
+            for (int i = 0; i < n; i++)
+            {
+                int cur = q[i];
+                int py = cur / map_w;
+                int px = cur - py * map_w;
+                sumx += px;
+                sumy += py;
+            }
+
+            float mx = (float)(sumx / n);
+            float my = (float)(sumy / n);
+
+            double cxx = 0.0;
+            double cyy = 0.0;
+            double cxy = 0.0;
+            for (int i = 0; i < n; i++)
+            {
+                int cur = q[i];
+                int py = cur / map_w;
+                int px = cur - py * map_w;
+                double dx = px - mx;
+                double dy = py - my;
+                cxx += dx * dx;
+                cyy += dy * dy;
+                cxy += dx * dy;
+            }
+
+            float theta = 0.f;
+            if (n > 1)
+                theta = 0.5f * atan2f((float)(2.0 * cxy), (float)(cxx - cyy));
+
+            float ux = cosf(theta);
+            float uy = sinf(theta);
+            float vx = -uy;
+            float vy = ux;
+
+            // Project component pixels to local axes to get oriented extents.
+            float min_u = 1e20f;
+            float max_u = -1e20f;
+            float min_v = 1e20f;
+            float max_v = -1e20f;
+
+            for (int i = 0; i < n; i++)
+            {
+                int cur = q[i];
+                int py = cur / map_w;
+                int px = cur - py * map_w;
+
+                float dx = px - mx;
+                float dy = py - my;
+
+                float pu = dx * ux + dy * uy;
+                float pv = dx * vx + dy * vy;
+
+                min_u = std::min(min_u, pu);
+                max_u = std::max(max_u, pu);
+                min_v = std::min(min_v, pv);
+                max_v = std::max(max_v, pv);
+            }
+
+            float major = max_u - min_u + 1.f;
+            float minor = max_v - min_v + 1.f;
+
+            float center_u = (min_u + max_u) * 0.5f;
+            float center_v = (min_v + max_v) * 0.5f;
+
+            float cx = mx + ux * center_u + vx * center_v;
+            float cy = my + uy * center_u + vy * center_v;
+
+            if (major < minor)
+            {
+                // Ensure major >= minor so text long side is consistently h.
+                std::swap(major, minor);
+                std::swap(ux, vx);
+                std::swap(uy, vy);
+            }
+
+            float rw = minor;
+            float rh = major;
+
+            rw *= enlarge_ratio;
+            rh += minor * (enlarge_ratio - 1.f);
+
+            // Undo letterbox/padding back to original image coordinates.
+            cx = (cx - (wpad / 2.f)) / scale;
+            cy = (cy - (hpad / 2.f)) / scale;
+            rw = rw / scale;
+            rh = rh / scale;
+
+            if (rw <= 1.f || rh <= 1.f)
+                continue;
+
+            int orientation = 0;
+            float angle = atan2f(uy, ux) * 180.f / 3.14159265f;
+            if (angle < 0.f)
+                angle += 180.f;
+
+            Object obj;
+            obj.cx = cx;
+            obj.cy = cy;
+            obj.w = rw;
+            obj.h = rh;
+            obj.ux = ux;
+            obj.uy = uy;
+            obj.vx = vx;
+            obj.vy = vy;
+            obj.angle = angle;
+            obj.orientation = orientation;
+            obj.prob = score;
+            objects.push_back(obj);
+        }
+    }
+
+    std::sort(objects.begin(), objects.end(), [](const Object& a, const Object& b) {
+        if (fabsf(a.cy - b.cy) > 10.f)
+            return a.cy < b.cy;
+        return a.cx < b.cx;
+    });
+}
+
+void PPOCRv5::recognize(const unsigned char* rgb, int img_w, int img_h, Object& object)
+{
+    // Crop oriented line image, normalize, then run recognizer.
+    std::vector<unsigned char> crop_rgb;
+    int crop_w = 0;
+    int crop_h = 0;
+    if (get_rotate_crop_image(rgb, img_w, img_h, object, crop_rgb, crop_w, crop_h) != 0)
+        return;
+
+    ncnn::Mat in = ncnn::Mat::from_pixels(crop_rgb.data(), ncnn::Mat::PIXEL_RGB2BGR, crop_w, crop_h);
+
+    const float mean_vals[3] = {127.5f, 127.5f, 127.5f};
+    const float norm_vals[3] = {1.f / 127.5f, 1.f / 127.5f, 1.f / 127.5f};
+    in.substract_mean_normalize(mean_vals, norm_vals);
+
+    ncnn::Extractor ex = ppocrv5_rec.create_extractor();
+    ex.input("in0", in);
+
+    ncnn::Mat out;
+    ex.extract("out0", out);
+
+    decode_ctc_text(out, object.text);
+}
+
+static int detect_ppocrv5(const unsigned char* rgb, int img_w, int img_h, std::vector<Object>& objects)
+{
+    // Same high-level flow as ppocrv5.cpp: init -> detect -> recognize per object.
+    PPOCRv5 ppocrv5;
+
+    ppocrv5.init();
+
+    ppocrv5.detect(rgb, img_w, img_h, objects);
+
+    for (size_t i = 0; i < objects.size(); i++)
+    {
+        ppocrv5.recognize(rgb, img_w, img_h, objects[i]);
+    }
+
+    return 0;
+}
+
+static int draw_objects(const std::vector<Object>& objects)
+{
+    // Console output format intentionally mirrors ppocrv5.cpp.
+    for (size_t i = 0; i < objects.size(); i++)
+    {
+        const Object& obj = objects[i];
+
+        fprintf(stderr, "%s %.5f at %.2f %.2f %.2f x %.2f  @ %.2f  =  ", obj.orientation == 0 ? "H" : "V", obj.prob,
+                obj.cx, obj.cy, obj.w, obj.h, obj.angle);
+
+        std::string text;
+        for (size_t j = 0; j < objects[i].text.size(); j++)
+        {
+            const Character& ch = objects[i].text[j];
+            if (ch.id >= character_dict_size)
+                continue;
+
+            text += character_dict[ch.id];
+        }
+        fprintf(stderr, "%s\n", text.c_str());
+    }
+
+    return 0;
+}
+
+int main(int argc, char** argv)
+{
+    if (argc != 2)
+    {
+        fprintf(stderr, "Usage: %s [imagepath]\n", argv[0]);
+        return -1;
+    }
+
+    const char* imagepath = argv[1];
+
+    int img_w = 0;
+    int img_h = 0;
+    int img_c = 0;
+
+    unsigned char* rgb = stbi_load(imagepath, &img_w, &img_h, &img_c, 3);
+    if (!rgb)
+    {
+        fprintf(stderr, "stbi_load %s failed\n", imagepath);
+        return -1;
+    }
+
+    std::vector<Object> objects;
+    detect_ppocrv5(rgb, img_w, img_h, objects);
+
+    draw_objects(objects);
+
+    stbi_image_free(rgb);
+
+    return 0;
+}
