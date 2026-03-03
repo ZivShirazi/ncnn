@@ -203,40 +203,57 @@ void PPOCRv5::detect(const unsigned char* rgb, int img_w, int img_h, std::vector
         }
     }
 
-    ncnn::Mat in = ncnn::Mat::from_pixels_resize(rgb, ncnn::Mat::PIXEL_RGB2BGR, img_w, img_h, w, h);
+    ncnn::Mat in = ncnn::Mat::from_pixels_resize(rgb, ncnn::Mat::PIXEL_RGB, img_w, img_h, w, h);
 
+    // Calculate how much pixels to add for each side to make the padded size divisible by target_stride.
     int wpad = (w + target_stride - 1) / target_stride * target_stride - w;
     int hpad = (h + target_stride - 1) / target_stride * target_stride - h;
     ncnn::Mat in_pad;
     ncnn::copy_make_border(in, in_pad, hpad / 2, hpad - hpad / 2, wpad / 2, wpad - wpad / 2, ncnn::BORDER_CONSTANT, 114.f);
 
+    // Those preprocessing values are specific for the model used in this example, and may need to be changed for different models.
+    // Look for substract_mean_normalize in the docs for further explanation.
     const float mean_vals[3] = {0.485f * 255.f, 0.456f * 255.f, 0.406f * 255.f};
     const float norm_vals[3] = {1 / 0.229f / 255.f, 1 / 0.224f / 255.f, 1 / 0.225f / 255.f};
     in_pad.substract_mean_normalize(mean_vals, norm_vals);
 
     ncnn::Extractor ex = ppocrv5_det.create_extractor();
+
     ex.input("in0", in_pad);
 
     ncnn::Mat out;
     ex.extract("out0", out);
 
+    // Detector out0 is probability map in [0,1]. We convert it to [0,255].
+    // The dimensions of out are the same as the padded input,
+    // so we can map detected boxes back to original image space via the scale factor and padding size.
     const float denorm_vals[1] = {255.f};
     out.substract_mean_normalize(0, denorm_vals);
 
+    // Any pixel with a probability higher than this is considered "text."
     const float threshold = 0.3f;
+    // The box confidence threshold. After finding a box,
+    // the average probability of all pixels inside it must be at least 0.6 for the box to be kept.
     const float box_thresh = 0.6f;
+    // Used to expand the detected text region slightly.
+    // Since the model is trained to detect the "shrunk" kernel of the text,
+    // this ratio helps restore the box to its original full size.
     const float enlarge_ratio = 1.95f;
     const float min_size = 3 * scale;
+    // Ignores tiny boxes (likely noise) that are smaller than a few pixels.
     const int max_candidates = 1000;
 
     const int map_w = out.w;
     const int map_h = out.h;
 
     // Detector out0 is probability map in [0,1], converted to [0,255] above.
+    // Convert probability map to pixel map for easier processing.
+    // Use PIXEL_GRAY since we only have one channel, and we want the output to be in [0,255].
     std::vector<unsigned char> pred((size_t)map_w * map_h, 0);
     out.to_pixels(pred.data(), ncnn::Mat::PIXEL_GRAY);
 
     // Threshold map to bitmap, then run connected components to get candidates.
+    // Threshold map to bitmap.
     std::vector<unsigned char> bitmap((size_t)map_w * map_h, 0);
     for (int y = 0; y < map_h; y++)
     {
