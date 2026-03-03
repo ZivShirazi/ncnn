@@ -3,6 +3,7 @@
 #endif
 
 #include "layer.h"
+#include "mat.h"
 #include "net.h"
 
 #include "ppocrv5_dict.h"
@@ -50,38 +51,6 @@ struct Object
     std::vector<Character> text;
 };
 
-static inline int clamp_int(int v, int lo, int hi)
-{
-    return std::max(lo, std::min(v, hi));
-}
-
-// Bilinear sampler on RGB image. Coordinates are clamped to image border,
-// matching the border-replicate behavior used by the OpenCV path.
-static inline unsigned char sample_bilinear_channel(const unsigned char* rgb, int img_w, int img_h, float x, float y, int c)
-{
-    x = std::max(0.f, std::min(x, (float)(img_w - 1)));
-    y = std::max(0.f, std::min(y, (float)(img_h - 1)));
-
-    int x0 = (int)floorf(x);
-    int y0 = (int)floorf(y);
-    int x1 = std::min(x0 + 1, img_w - 1);
-    int y1 = std::min(y0 + 1, img_h - 1);
-
-    float dx = x - x0;
-    float dy = y - y0;
-
-    const unsigned char* p00 = rgb + ((size_t)y0 * img_w + x0) * 3 + c;
-    const unsigned char* p01 = rgb + ((size_t)y0 * img_w + x1) * 3 + c;
-    const unsigned char* p10 = rgb + ((size_t)y1 * img_w + x0) * 3 + c;
-    const unsigned char* p11 = rgb + ((size_t)y1 * img_w + x1) * 3 + c;
-
-    float v0 = p00[0] * (1.f - dx) + p01[0] * dx;
-    float v1 = p10[0] * (1.f - dx) + p11[0] * dx;
-    float v = v0 * (1.f - dy) + v1 * dy;
-
-    return (unsigned char)clamp_int((int)roundf(v), 0, 255);
-}
-
 // CTC greedy decoding:
 // - argmax over classes for each timestep
 // - collapse repeated tokens
@@ -126,8 +95,7 @@ static int decode_ctc_text(const ncnn::Mat& out, std::vector<Character>& text)
     return 0;
 }
 
-// Crop text region into recognizer input canvas (target_h=48) using oriented sampling.
-// This replaces OpenCV warpAffine/warpPerspective with explicit per-pixel mapping.
+// Crop text region into recognizer input canvas (target_h=48) via ncnn affine warp.
 static int get_rotate_crop_image(const unsigned char* rgb, int img_w, int img_h, const Object& object, std::vector<unsigned char>& crop_rgb, int& crop_w, int& crop_h)
 {
     const int target_height = 48;
@@ -141,24 +109,37 @@ static int get_rotate_crop_image(const unsigned char* rgb, int img_w, int img_h,
     if (crop_w <= 1 || crop_h <= 1)
         return -1;
 
-    crop_rgb.resize((size_t)crop_w * crop_h * 3, 0);
+    std::vector<unsigned char> affine_rgb((size_t)crop_w * crop_h * 3);
 
-    // Destination pixel (x,y) -> source image coordinate using object local axes.
-    for (int y = 0; y < crop_h; y++)
+    // Build source rectangle corners from object center/axes.
+    const float hh = object.h * 0.5f;
+    const float hw = object.w * 0.5f;
+
+    const float p0x = object.cx - object.ux * hh - object.vx * hw;
+    const float p0y = object.cy - object.uy * hh - object.vy * hw;
+    const float p1x = object.cx + object.ux * hh - object.vx * hw;
+    const float p1y = object.cy + object.uy * hh - object.vy * hw;
+    const float p2x = object.cx - object.ux * hh + object.vx * hw;
+    const float p2y = object.cy - object.uy * hh + object.vy * hw;
+
+    // ncnn warpaffine expects inverse transform (dst -> src).
+    float src_pts[6] = {p0x, p0y, p1x, p1y, p2x, p2y};
+    float dst_pts[6] = {0.f, 0.f, (float)crop_w, 0.f, 0.f, (float)crop_h};
+    float tm[6];
+    ncnn::get_affine_transform(dst_pts, src_pts, 3, tm);
+
+    ncnn::warpaffine_bilinear_c3(rgb, img_w, img_h, affine_rgb.data(), crop_w, crop_h, tm);
+
+    if (object.ux < 0.f)
     {
-        float v = ((y + 0.5f) / crop_h - 0.5f) * object.w;
-        for (int x = 0; x < crop_w; x++)
-        {
-            float u = ((x + 0.5f) / crop_w - 0.5f) * object.h;
-
-            float sx = object.cx + object.ux * u + object.vx * v;
-            float sy = object.cy + object.uy * u + object.vy * v;
-
-            unsigned char* dst = crop_rgb.data() + ((size_t)y * crop_w + x) * 3;
-            dst[0] = sample_bilinear_channel(rgb, img_w, img_h, sx, sy, 0);
-            dst[1] = sample_bilinear_channel(rgb, img_w, img_h, sx, sy, 1);
-            dst[2] = sample_bilinear_channel(rgb, img_w, img_h, sx, sy, 2);
-        }
+        // Keep text direction stable when principal axis points to the left.
+        std::vector<unsigned char> rotated_rgb((size_t)crop_w * crop_h * 3);
+        ncnn::kanna_rotate_c3(affine_rgb.data(), crop_w, crop_h, rotated_rgb.data(), crop_w, crop_h, 3);
+        crop_rgb.swap(rotated_rgb);
+    }
+    else
+    {
+        crop_rgb.swap(affine_rgb);
     }
 
     return 0;
@@ -182,10 +163,16 @@ void PPOCRv5::init()
 {
     // no-OpenCV build keeps Vulkan off by default for wider compatibility.
     ppocrv5_det.opt.use_vulkan_compute = false;
+#if NCNN_VULKAN
+    ppocrv5_det.opt.use_vulkan_compute = true;
+#endif // NCNN_VULKAN
     ppocrv5_det.load_param("PP_OCRv5_mobile_det.ncnn.param");
     ppocrv5_det.load_model("PP_OCRv5_mobile_det.ncnn.bin");
 
     ppocrv5_rec.opt.use_vulkan_compute = false;
+#if NCNN_VULKAN
+    ppocrv5_rec.opt.use_vulkan_compute = true;
+#endif // NCNN_VULKAN
     ppocrv5_rec.load_param("PP_OCRv5_mobile_rec.ncnn.param");
     ppocrv5_rec.load_model("PP_OCRv5_mobile_rec.ncnn.bin");
 }
