@@ -98,6 +98,7 @@ static int decode_ctc_text(const ncnn::Mat& out, std::vector<Character>& text)
 // Crop text region into recognizer input canvas (target_h=48) via ncnn affine warp.
 static int get_rotate_crop_image(const unsigned char* rgb, int img_w, int img_h, const Object& object, std::vector<unsigned char>& crop_rgb, int& crop_w, int& crop_h)
 {
+    // The recognizer model is trained with 48 pixel height and variable width (depending on the aspect ratio of the text line).
     const int target_height = 48;
     const float rw = std::max(object.w, 1.f);
     const float rh = std::max(object.h, 1.f);
@@ -115,6 +116,7 @@ static int get_rotate_crop_image(const unsigned char* rgb, int img_w, int img_h,
     const float hh = object.h * 0.5f;
     const float hw = object.w * 0.5f;
 
+    // Caculating the 3 corners of the source rectangle. The 4th corner can be inferred since it's a parallelogram.
     const float p0x = object.cx - object.ux * hh - object.vx * hw;
     const float p0y = object.cy - object.uy * hh - object.vy * hw;
     const float p1x = object.cx + object.ux * hh - object.vx * hw;
@@ -122,14 +124,18 @@ static int get_rotate_crop_image(const unsigned char* rgb, int img_w, int img_h,
     const float p2x = object.cx - object.ux * hh + object.vx * hw;
     const float p2y = object.cy - object.uy * hh + object.vy * hw;
 
-    // ncnn warpaffine expects inverse transform (dst -> src).
+    // Calculate a 2x3 affine transform matrix that represents the
+    // rotation and scaling from the source rectangle to the destination rectangle.
     float src_pts[6] = {p0x, p0y, p1x, p1y, p2x, p2y};
     float dst_pts[6] = {0.f, 0.f, (float)crop_w, 0.f, 0.f, (float)crop_h};
     float tm[6];
     ncnn::get_affine_transform(dst_pts, src_pts, 3, tm);
 
+    // Effectively do: affine_rgb = warp_affine(rgb, tm), with bilinear sampling and border replication.
+    // Which means that we rotate the text region to be horizontal, and resize it to the target height and variable width.
     ncnn::warpaffine_bilinear_c3(rgb, img_w, img_h, affine_rgb.data(), crop_w, crop_h, tm);
 
+    // Get the text in the right direction according to the principal axis. This is important for recognizer performance.
     if (object.ux < 0.f)
     {
         // Keep text direction stable when principal axis points to the left.
@@ -246,14 +252,12 @@ void PPOCRv5::detect(const unsigned char* rgb, int img_w, int img_h, std::vector
     const int map_w = out.w;
     const int map_h = out.h;
 
-    // Detector out0 is probability map in [0,1], converted to [0,255] above.
     // Convert probability map to pixel map for easier processing.
     // Use PIXEL_GRAY since we only have one channel, and we want the output to be in [0,255].
     std::vector<unsigned char> pred((size_t)map_w * map_h, 0);
     out.to_pixels(pred.data(), ncnn::Mat::PIXEL_GRAY);
 
     // Threshold map to bitmap, then run connected components to get candidates.
-    // Threshold map to bitmap.
     std::vector<unsigned char> bitmap((size_t)map_w * map_h, 0);
     for (int y = 0; y < map_h; y++)
     {
@@ -326,6 +330,8 @@ void PPOCRv5::detect(const unsigned char* rgb, int img_w, int img_h, std::vector
             if (score_count == 0)
                 continue;
 
+            // Check that the average score of the connected component is above box_thresh,
+            //  and its size is above min_size. If not, skip it as a false positive.
             float score = score_sum / score_count / 255.f;
             if (score < box_thresh)
                 continue;
@@ -337,6 +343,12 @@ void PPOCRv5::detect(const unsigned char* rgb, int img_w, int img_h, std::vector
                 continue;
 
             const int n = score_count;
+
+            // Everything below is for rotated box fitting.
+            // We want to find the minimum-area rotated rectangle that encloses all pixels in the connected component.
+            // If OpenCV is available, we can just call minAreaRect. But since this example is for no-OpenCV build,
+            // we implement a simple PCA-based rotated rectangle fitting here.
+            // If we only need axis-aligned boxes, we can just use the AABB (minx, miny, maxx, maxy) without all this.
 
             // Compute principal direction (PCA) from foreground pixels.
             // This approximates minAreaRect orientation without OpenCV.
