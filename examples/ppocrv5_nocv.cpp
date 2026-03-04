@@ -6,6 +6,11 @@
 #include "mat.h"
 #include "net.h"
 
+#include "PP_OCRv5_mobile_det.mem.h"
+#include "PP_OCRv5_mobile_det.id.h"
+#include "PP_OCRv5_mobile_rec.mem.h"
+#include "PP_OCRv5_mobile_rec.id.h"
+
 #include "ppocrv5_dict.h"
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
@@ -174,6 +179,7 @@ class PPOCRv5
 {
 public:
     void init();
+    void deinit();
 
     void detect(const unsigned char* rgb, int img_w, int img_h, std::vector<Object>& objects);
 
@@ -184,6 +190,12 @@ protected:
     ncnn::Net ppocrv5_rec;
 };
 
+void PPOCRv5::deinit()
+{
+    ppocrv5_det.clear();
+    ppocrv5_rec.clear();
+}
+
 void PPOCRv5::init()
 {
     // no-OpenCV build keeps Vulkan off by default for wider compatibility.
@@ -191,15 +203,15 @@ void PPOCRv5::init()
 #if NCNN_VULKAN
     ppocrv5_det.opt.use_vulkan_compute = true;
 #endif // NCNN_VULKAN
-    ppocrv5_det.load_param("PP_OCRv5_mobile_det.ncnn.param");
-    ppocrv5_det.load_model("PP_OCRv5_mobile_det.ncnn.bin");
+    ppocrv5_det.load_param(PP_OCRv5_mobile_det_ncnn_param_bin);
+    ppocrv5_det.load_model(PP_OCRv5_mobile_det_ncnn_bin);
 
     ppocrv5_rec.opt.use_vulkan_compute = false;
 #if NCNN_VULKAN
     ppocrv5_rec.opt.use_vulkan_compute = true;
 #endif // NCNN_VULKAN
-    ppocrv5_rec.load_param("PP_OCRv5_mobile_rec.ncnn.param");
-    ppocrv5_rec.load_model("PP_OCRv5_mobile_rec.ncnn.bin");
+    ppocrv5_rec.load_param(PP_OCRv5_mobile_rec_ncnn_param_bin);
+    ppocrv5_rec.load_model(PP_OCRv5_mobile_rec_ncnn_bin);
 }
 
 void PPOCRv5::detect(const unsigned char* rgb, int img_w, int img_h, std::vector<Object>& objects)
@@ -244,10 +256,10 @@ void PPOCRv5::detect(const unsigned char* rgb, int img_w, int img_h, std::vector
 
     ncnn::Extractor ex = ppocrv5_det.create_extractor();
 
-    ex.input("in0", in_pad);
+    ex.input(PP_OCRv5_mobile_det_ncnn_param_id::LAYER_in0, in_pad);
 
     ncnn::Mat out;
-    ex.extract("out0", out);
+    ex.extract(PP_OCRv5_mobile_det_ncnn_param_id::BLOB_out0, out);
 
     // Detector out0 is probability map in [0,1]. We convert it to [0,255].
     // The dimensions of out are the same as the padded input,
@@ -512,10 +524,10 @@ void PPOCRv5::recognize(const unsigned char* rgb, int img_w, int img_h, Object& 
     in.substract_mean_normalize(mean_vals, norm_vals);
 
     ncnn::Extractor ex = ppocrv5_rec.create_extractor();
-    ex.input("in0", in);
+    ex.input(PP_OCRv5_mobile_rec_ncnn_param_id::LAYER_in0, in);
 
     ncnn::Mat out;
-    ex.extract("out0", out);
+    ex.extract(PP_OCRv5_mobile_rec_ncnn_param_id::BLOB_out0, out);
 
     decode_ctc_text(out, object.text);
 }
@@ -533,6 +545,8 @@ static int detect_ppocrv5(const unsigned char* rgb, int img_w, int img_h, std::v
     {
         ppocrv5.recognize(rgb, img_w, img_h, objects[i]);
     }
+
+    ppocrv5.deinit();
 
     return 0;
 }
