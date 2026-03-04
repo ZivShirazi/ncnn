@@ -4,17 +4,7 @@ import os
 # Comprehensive list of standard ncnn layer types
 # These names match the first column in an ncnn .param file
 ALL_NCNN_LAYERS = [
-    "AbsVal", "ArgMax", "BatchNorm", "Bias", "BinaryOp", "BNLL", "Cast", "Clip",
-    "Concat", "Convolution", "Convolution1D", "ConvolutionDepthWise", "Crop",
-    "Deconvolution", "DeconvolutionDepthWise", "DetectionOutput", "Dropout",
-    "Eltwise", "ELU", "Embed", "Exp", "ExpandDims", "Flatten", "InnerProduct",
-    "Input", "Interp", "Log", "LRN", "LSTM", "MemoryData", "MVN", "Normalize",
-    "Packing", "Padding", "Permute", "Pooling", "Power", "PReLU", "PriorBox",
-    "Proposal", "PSROIPooling", "Quantize", "ReLU", "Reorg", "Requantize",
-    "Reshape", "RNN", "ROIAlign", "ROIPooling", "Scale", "Selu", "ShuffleChannel",
-    "Sigmoid", "Slice", "Softmax", "Split", "SPP", "Squeeze", "Tanh", "Threshold",
-    "Tile", "UnaryOp", "YoloDetectionOutput", "Yolov3DetectionOutput", "Mish",
-    "GELU", "Softplus", "Swish", "HardSigmoid", "HardSwish", "PixelShuffle", "GLU"
+ "absval", "argmax", "batchnorm", "bias", "binaryop", "bnll", "cast", "celu", "clip", "concat", "convolution", "convolution1d", "convolution3d", "convolutiondepthwise", "convolutiondepthwise1d", "convolutiondepthwise3d", "copyto", "crop", "cumulativesum", "deconvolution", "deconvolution1d", "deconvolution3d", "deconvolutiondepthwise", "deconvolutiondepthwise1d", "deconvolutiondepthwise3d", "deepcopy", "deformableconv2d", "dequantize", "detectionoutput", "diag", "dropout", "einsum", "eltwise", "elu", "embed", "erf", "exp", "expanddims", "flatten", "flip", "fold", "gelu", "gemm", "glu", "gridsample", "groupnorm", "gru", "hardsigmoid", "hardswish", "innerproduct", "input", "instancenorm", "interp", "inversespectrogram", "layernorm", "log", "lrn", "lstm", "matmul", "memorydata", "mish", "multiheadattention", "mvn", "noop", "normalize", "packing", "padding", "permute", "pixelshuffle", "pooling", "pooling1d", "pooling3d", "power", "prelu", "priorbox", "proposal", "psroipooling", "quantize", "reduction", "relu", "reorg", "requantize", "reshape", "rmsnorm", "rnn", "roialign", "roipooling", "rotaryembed", "scale", "sdpa", "selu", "shrink", "shufflechannel", "sigmoid", "slice", "softmax", "softplus", "spectrogram", "split", "spp", "squeeze", "statisticspooling", "swish", "tanh", "threshold", "tile", "unaryop", "unfold", "yolodetectionoutput", "yolov3detectionoutput"
 ]
 
 def get_used_layers(param_files):
@@ -51,7 +41,7 @@ def generate_cmake_flags(used_layers):
         
         status = "ON" if (layer_flag_name in used_lower) or (layer_flag_name in always_on_layers) else "OFF"
         flags.append(f"-DWITH_LAYER_{layer_flag_name}={status}")
-        
+
     return flags
 
 if __name__ == "__main__":
