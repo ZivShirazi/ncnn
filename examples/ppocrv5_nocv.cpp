@@ -51,10 +51,28 @@ struct Object
     std::vector<Character> text;
 };
 
-// CTC greedy decoding:
-// - argmax over classes for each timestep
-// - collapse repeated tokens
-// - skip blank index (0)
+// CTC greedy decoding (plain-language version):
+//
+// The recognizer does NOT output a final string directly.
+// Instead, for each time step (possible recognized character) along the text line, it outputs a probability
+// distribution over all possible symbols:
+//
+//   out.h = number of time steps
+//   out.w = number of classes (class 0 is the special "blank" token)
+//
+// CTC (Connectionist Temporal Classification) is a common OCR sequence format.
+// In CTC, the network can emit:
+// - a real character class (1..N), or
+// - blank (0), which means "no character at this step".
+//
+// This function applies standard greedy CTC decoding:
+// 1) At each time step, choose the class with maximum probability (argmax).
+// 2) If it is the same as the previous chosen class, skip it
+//    (collapse repeated runs like A A A -> A).
+// 3) If the chosen class is blank (0), skip it.
+// 4) Otherwise, store the decoded symbol id (index - 1) and its probability.
+//
+// The resulting token list is later mapped to UTF-8 strings by character_dict.
 static int decode_ctc_text(const ncnn::Mat& out, std::vector<Character>& text)
 {
     if (out.empty())
@@ -78,6 +96,7 @@ static int decode_ctc_text(const ncnn::Mat& out, std::vector<Character>& text)
             }
         }
 
+        // CTC rule, if index is same as last one, they will be merged into one token
         if (last_token == index)
             continue;
 
@@ -483,8 +502,11 @@ void PPOCRv5::recognize(const unsigned char* rgb, int img_w, int img_h, Object& 
     if (get_rotate_crop_image(rgb, img_w, img_h, object, crop_rgb, crop_w, crop_h) != 0)
         return;
 
+    // Create a matrix and convert from RGB to BGR
     ncnn::Mat in = ncnn::Mat::from_pixels(crop_rgb.data(), ncnn::Mat::PIXEL_RGB2BGR, crop_w, crop_h);
 
+    //Scale the data from 0 to 255 integers into -1.0 to 1.0 floating-point numbers.
+    // Those preprocessing values are specific for the model used in this example, and may need to be changed for different models.
     const float mean_vals[3] = {127.5f, 127.5f, 127.5f};
     const float norm_vals[3] = {1.f / 127.5f, 1.f / 127.5f, 1.f / 127.5f};
     in.substract_mean_normalize(mean_vals, norm_vals);
@@ -564,6 +586,7 @@ int main(int argc, char** argv)
     std::vector<Object> objects;
     detect_ppocrv5(rgb, img_w, img_h, objects);
 
+    // Convert indexes to charcters using the character_dict, then print the results.
     draw_objects(objects);
 
     stbi_image_free(rgb);
