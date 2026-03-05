@@ -1,3 +1,24 @@
+### Recommended compile flags
+
+For the example OCR, the recommended compile flags are:
+
+```bash
+ cmake -S . -B build-size -A x64 -DCMAKE_BUILD_TYPE=Release -DNCNN_F16C=ON -DNCNN_INT8=ON -DNCNN_BF16=OFF -DNCNN_SIMPLEVK=OFF -DNCNN_SIMPLESTL=OFF -DNCNN_SHARED_LIB=OFF -DNCNN_BUILD_WITH_STATIC_CRT=ON -DNCNN_ENABLE_LTO=OFF -DNCNN_BUILD_EXAMPLES=ON -DNCNN_BUILD_TOOLS=OFF -DNCNN_BUILD_BENCHMARK=OFF -DNCNN_BUILD_TESTS=OFF -DNCNN_VULKAN=OFF -DNCNN_OPENMP=OFF -DNCNN_THREADS=OFF -DNCNN_RUNTIME_CPU=ON -DNCNN_C_API=OFF -DNCNN_PLATFORM_API=OFF-DNCNN_PIXEL=ON -DNCNN_PIXEL_ROTATE=ON -DNCNN_PIXEL_AFFINE=ON -DNCNN_PIXEL_DRAWING=OFF -DNCNN_AVX=ON -DNCNN_AVX2=OFF -DNCNN_FMA=OFF -DNCNN_XOP=OFF -DNCNN_AVX512=OFF -DNCNN_DISABLE_RTTI=ON -DNCNN_STRING=OFF -DNCNN_STDIO=OFF -DWITH_LAYER_absval=OFF -DWITH_LAYER_argmax=OFF -DWITH_LAYER_batchnorm=OFF -DWITH_LAYER_bias=OFF -DWITH_LAYER_binaryop=ON -DWITH_LAYER_bnll=OFF -DWITH_LAYER_cast=ON -DWITH_LAYER_celu=OFF -DWITH_LAYER_clip=ON -DWITH_LAYER_concat=ON -DWITH_LAYER_convolution=ON -DWITH_LAYER_convolution1d=OFF -DWITH_LAYER_convolution3d=OFF -DWITH_LAYER_convolutiondepthwise=ON -DWITH_LAYER_convolutiondepthwise1d=OFF -DWITH_LAYER_convolutiondepthwise3d=OFF -DWITH_LAYER_copyto=OFF -DWITH_LAYER_crop=OFF -DWITH_LAYER_cumulativesum=OFF -DWITH_LAYER_deconvolution=ON -DWITH_LAYER_deconvolution1d=OFF -DWITH_LAYER_deconvolution3d=OFF -DWITH_LAYER_deconvolutiondepthwise=OFF -DWITH_LAYER_deconvolutiondepthwise1d=OFF -DWITH_LAYER_deconvolutiondepthwise3d=OFF -DWITH_LAYER_deepcopy=OFF -DWITH_LAYER_deformableconv2d=OFF -DWITH_LAYER_dequantize=OFF -DWITH_LAYER_detectionoutput=OFF -DWITH_LAYER_diag=OFF -DWITH_LAYER_dropout=OFF -DWITH_LAYER_einsum=OFF -DWITH_LAYER_eltwise=OFF -DWITH_LAYER_elu=OFF -DWITH_LAYER_embed=OFF -DWITH_LAYER_erf=OFF -DWITH_LAYER_exp=OFF -DWITH_LAYER_expanddims=OFF -DWITH_LAYER_flatten=ON -DWITH_LAYER_flip=OFF -DWITH_LAYER_fold=OFF -DWITH_LAYER_gelu=OFF -DWITH_LAYER_gemm=ON -DWITH_LAYER_glu=OFF -DWITH_LAYER_gridsample=OFF -DWITH_LAYER_groupnorm=OFF -DWITH_LAYER_gru=OFF -DWITH_LAYER_hardsigmoid=ON -DWITH_LAYER_hardswish=ON -DWITH_LAYER_innerproduct=ON -DWITH_LAYER_input=ON -DWITH_LAYER_instancenorm=OFF -DWITH_LAYER_interp=ON -DWITH_LAYER_inversespectrogram=OFF -DWITH_LAYER_layernorm=ON -DWITH_LAYER_log=OFF -DWITH_LAYER_lrn=OFF -DWITH_LAYER_lstm=OFF -DWITH_LAYER_matmul=OFF -DWITH_LAYER_memorydata=OFF -DWITH_LAYER_mish=OFF -DWITH_LAYER_multiheadattention=ON -DWITH_LAYER_mvn=OFF -DWITH_LAYER_noop=ON -DWITH_LAYER_normalize=OFF -DWITH_LAYER_packing=ON -DWITH_LAYER_padding=ON -DWITH_LAYER_permute=ON -DWITH_LAYER_pixelshuffle=OFF -DWITH_LAYER_pooling=ON -DWITH_LAYER_pooling1d=OFF -DWITH_LAYER_pooling3d=OFF -DWITH_LAYER_power=OFF -DWITH_LAYER_prelu=OFF -DWITH_LAYER_priorbox=OFF -DWITH_LAYER_proposal=OFF -DWITH_LAYER_psroipooling=OFF -DWITH_LAYER_quantize=OFF -DWITH_LAYER_reduction=OFF -DWITH_LAYER_relu=ON -DWITH_LAYER_reorg=OFF -DWITH_LAYER_requantize=OFF -DWITH_LAYER_reshape=ON -DWITH_LAYER_rmsnorm=OFF -DWITH_LAYER_rnn=OFF -DWITH_LAYER_roialign=OFF -DWITH_LAYER_roipooling=OFF -DWITH_LAYER_rotaryembed=OFF -DWITH_LAYER_scale=ON -DWITH_LAYER_sdpa=OFF -DWITH_LAYER_selu=OFF -DWITH_LAYER_shrink=OFF -DWITH_LAYER_shufflechannel=OFF -DWITH_LAYER_sigmoid=ON -DWITH_LAYER_slice=OFF -DWITH_LAYER_softmax=ON -DWITH_LAYER_softplus=OFF -DWITH_LAYER_spectrogram=OFF -DWITH_LAYER_split=ON -DWITH_LAYER_spp=OFF -DWITH_LAYER_squeeze=ON -DWITH_LAYER_statisticspooling=OFF -DWITH_LAYER_swish=ON -DWITH_LAYER_tanh=OFF -DWITH_LAYER_threshold=OFF -DWITH_LAYER_tile=OFF -DWITH_LAYER_unaryop=ON -DWITH_LAYER_unfold=OFF -DWITH_LAYER_yolodetectionoutput=OFF -DWITH_LAYER_yolov3detectionoutput=OFF 
+```
+
+Build with:
+```bash
+cmake --build build-size --config MinSizeRel --target ppocrv5_nocv
+```
+
+- Which result in a size of 12 MB (10MB is the model which is a compiledd buffer, and 2MB is the inference engine and image processing).  
+    - For Release, the size is 12.5MB.
+
+- Without static CRT, the size is 11.7MB for MinSizeRel, and 12.2MB for Release.  
+
+- If we only use int8 quantized models, compiling with `-DNCNN_F16C=OFF` can also decrease binary size by 0.1MB.
+
+
 ### Flags meanings
 
 - `NCNN_PIXEL`: convert and resize from/to image pixel. Function to convert image format, resize, use ncnn::Mat.  
@@ -52,21 +73,3 @@ See docs\how-to-use-and-FAQ\use-ncnn-with-alexnet.md for how to use the .h files
 ### Disable unused operators
 
 Use the ncnn_optimize_flags.py script to disable unneeded flags. 
-
-### Recommended compile flags
-
-For the example OCR, the recommended compile flags are:
-
-```bash
- cmake -S . -B build-size -A x64 -DCMAKE_BUILD_TYPE=Release -DNCNN_F16C=ON -DNCNN_INT8=ON -DNCNN_BF16=OFF -DNCNN_SIMPLEVK=OFF -DNCNN_SIMPLESTL=OFF -DNCNN_SHARED_LIB=OFF -DNCNN_BUILD_WITH_STATIC_CRT=ON -DNCNN_ENABLE_LTO=OFF -DNCNN_BUILD_EXAMPLES=ON -DNCNN_BUILD_TOOLS=OFF -DNCNN_BUILD_BENCHMARK=OFF -DNCNN_BUILD_TESTS=OFF -DNCNN_VULKAN=OFF -DNCNN_OPENMP=OFF -DNCNN_THREADS=OFF -DNCNN_RUNTIME_CPU=ON -DNCNN_C_API=OFF -DNCNN_PLATFORM_API=OFF-DNCNN_PIXEL=ON -DNCNN_PIXEL_ROTATE=ON -DNCNN_PIXEL_AFFINE=ON -DNCNN_PIXEL_DRAWING=OFF -DNCNN_AVX=ON -DNCNN_AVX2=OFF -DNCNN_FMA=OFF -DNCNN_XOP=OFF -DNCNN_AVX512=OFF -DNCNN_DISABLE_RTTI=ON -DNCNN_STRING=OFF -DNCNN_STDIO=OFF -DWITH_LAYER_absval=OFF -DWITH_LAYER_argmax=OFF -DWITH_LAYER_batchnorm=OFF -DWITH_LAYER_bias=OFF -DWITH_LAYER_binaryop=ON -DWITH_LAYER_bnll=OFF -DWITH_LAYER_cast=ON -DWITH_LAYER_celu=OFF -DWITH_LAYER_clip=ON -DWITH_LAYER_concat=ON -DWITH_LAYER_convolution=ON -DWITH_LAYER_convolution1d=OFF -DWITH_LAYER_convolution3d=OFF -DWITH_LAYER_convolutiondepthwise=ON -DWITH_LAYER_convolutiondepthwise1d=OFF -DWITH_LAYER_convolutiondepthwise3d=OFF -DWITH_LAYER_copyto=OFF -DWITH_LAYER_crop=OFF -DWITH_LAYER_cumulativesum=OFF -DWITH_LAYER_deconvolution=ON -DWITH_LAYER_deconvolution1d=OFF -DWITH_LAYER_deconvolution3d=OFF -DWITH_LAYER_deconvolutiondepthwise=OFF -DWITH_LAYER_deconvolutiondepthwise1d=OFF -DWITH_LAYER_deconvolutiondepthwise3d=OFF -DWITH_LAYER_deepcopy=OFF -DWITH_LAYER_deformableconv2d=OFF -DWITH_LAYER_dequantize=OFF -DWITH_LAYER_detectionoutput=OFF -DWITH_LAYER_diag=OFF -DWITH_LAYER_dropout=OFF -DWITH_LAYER_einsum=OFF -DWITH_LAYER_eltwise=OFF -DWITH_LAYER_elu=OFF -DWITH_LAYER_embed=OFF -DWITH_LAYER_erf=OFF -DWITH_LAYER_exp=OFF -DWITH_LAYER_expanddims=OFF -DWITH_LAYER_flatten=ON -DWITH_LAYER_flip=OFF -DWITH_LAYER_fold=OFF -DWITH_LAYER_gelu=OFF -DWITH_LAYER_gemm=ON -DWITH_LAYER_glu=OFF -DWITH_LAYER_gridsample=OFF -DWITH_LAYER_groupnorm=OFF -DWITH_LAYER_gru=OFF -DWITH_LAYER_hardsigmoid=ON -DWITH_LAYER_hardswish=ON -DWITH_LAYER_innerproduct=ON -DWITH_LAYER_input=ON -DWITH_LAYER_instancenorm=OFF -DWITH_LAYER_interp=ON -DWITH_LAYER_inversespectrogram=OFF -DWITH_LAYER_layernorm=ON -DWITH_LAYER_log=OFF -DWITH_LAYER_lrn=OFF -DWITH_LAYER_lstm=OFF -DWITH_LAYER_matmul=OFF -DWITH_LAYER_memorydata=OFF -DWITH_LAYER_mish=OFF -DWITH_LAYER_multiheadattention=ON -DWITH_LAYER_mvn=OFF -DWITH_LAYER_noop=ON -DWITH_LAYER_normalize=OFF -DWITH_LAYER_packing=ON -DWITH_LAYER_padding=ON -DWITH_LAYER_permute=ON -DWITH_LAYER_pixelshuffle=OFF -DWITH_LAYER_pooling=ON -DWITH_LAYER_pooling1d=OFF -DWITH_LAYER_pooling3d=OFF -DWITH_LAYER_power=OFF -DWITH_LAYER_prelu=OFF -DWITH_LAYER_priorbox=OFF -DWITH_LAYER_proposal=OFF -DWITH_LAYER_psroipooling=OFF -DWITH_LAYER_quantize=OFF -DWITH_LAYER_reduction=OFF -DWITH_LAYER_relu=ON -DWITH_LAYER_reorg=OFF -DWITH_LAYER_requantize=OFF -DWITH_LAYER_reshape=ON -DWITH_LAYER_rmsnorm=OFF -DWITH_LAYER_rnn=OFF -DWITH_LAYER_roialign=OFF -DWITH_LAYER_roipooling=OFF -DWITH_LAYER_rotaryembed=OFF -DWITH_LAYER_scale=ON -DWITH_LAYER_sdpa=OFF -DWITH_LAYER_selu=OFF -DWITH_LAYER_shrink=OFF -DWITH_LAYER_shufflechannel=OFF -DWITH_LAYER_sigmoid=ON -DWITH_LAYER_slice=OFF -DWITH_LAYER_softmax=ON -DWITH_LAYER_softplus=OFF -DWITH_LAYER_spectrogram=OFF -DWITH_LAYER_split=ON -DWITH_LAYER_spp=OFF -DWITH_LAYER_squeeze=ON -DWITH_LAYER_statisticspooling=OFF -DWITH_LAYER_swish=ON -DWITH_LAYER_tanh=OFF -DWITH_LAYER_threshold=OFF -DWITH_LAYER_tile=OFF -DWITH_LAYER_unaryop=ON -DWITH_LAYER_unfold=OFF -DWITH_LAYER_yolodetectionoutput=OFF -DWITH_LAYER_yolov3detectionoutput=OFF 
-```
-
-Build with:
-```bash
-cmake --build build-size --config MinSizeRel --target ppocrv5_nocv
-```
-
-Which result in a size of 12 MB (10MB is the model which is a compiledd buffer, and 2MB is the inference engine and image processing)
-For Release, the size is 12.5MB,
-Without static CRT, the size is 11.7MB for MinSizeRel, and 12.2MB for Release.
-If we only use int8 quantized models, compiling with `-DNCNN_F16C=OFF` can also decrease binary size by 0.1MB.
