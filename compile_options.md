@@ -30,7 +30,7 @@ For example: from_pixels_roi_resize, yuv420sp2rgb, resize_bilinear_c1,
 
 - `NCNN_PIXEL_DRAWING`: draw basic figure and text. For example: draw_circle_c1, draw_rectangle_c1.
 
-- `NCNN_THREADS`: build with threads. If on, uses mutexes, condition variables, thread local storage.
+- `NCNN_THREADS`: build with threads. If on, uses mutexes, condition variables, thread local storage. We can't use it!
 
 - `NCNN_C_API`: build with C API. If ON, exports C functions in c_api.h file.
 
@@ -39,8 +39,10 @@ For example: from_pixels_roi_resize, yuv420sp2rgb, resize_bilinear_c1,
 - `NCNN_VULKAN`: vulkan compute support. Enable GPU acceleration. BUT - increase size by about 3 MB.
 
 - `NCNN_OPENMP`: openmp support. OpenMP is an API that supports shared-memory multiprocessing programming in C, C++.  
-Disabling this option means that the inference is executed on a single thread.  
-Still not sure why the NCNN_THREADS option exists if it doesn't seems to be related to using OpenMP for multithreading (when using #pragma omp parallel num_thread)
+Disabling this option means that the inference is executed on a single thread.    
+If enabled, adds 0.1MB the binary.
+if `NCNN_THREADS` is OFF, then using OpenMP can be unsafe, since no thread synchronization is implemented which might lead to race conditions.  
+Because we can't use `NCNN_THREADS`, then we also shouldn't use `NCNN_OPENMP`.
 
 - `NCNN_RUNTIME_CPU`: runtime dispatch cpu routines. Meaning, the implementation that matches the CPU (like AVX, FMA…) is detmined in runtime, based on the currebt CPU.  
 If DCNN_RUNTIME_CPU is off, an implementation from layer_registry_arch is used (for example, from src\layer\x86\bias_x86.cpp).  
@@ -73,3 +75,7 @@ See docs\how-to-use-and-FAQ\use-ncnn-with-alexnet.md for how to use the .h files
 ### Disable unused operators
 
 Use the ncnn_optimize_flags.py script to disable unneeded flags. 
+
+## int8 quantization
+
+See `docs\how-to-use-and-FAQ\quantized-int8-inference.md`. Both static and dynamic quantization is possible.

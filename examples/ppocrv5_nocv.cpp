@@ -1,3 +1,15 @@
+// pip install paddlepaddle==3.0.0
+// pip install paddleocr==3.0.0
+// paddlex --install paddle2onnx
+// paddleocr ocr -i test.png
+// paddlex --paddle2onnx --paddle_model_dir ~/.paddlex/official_models/PP-OCRv5_mobile_det --onnx_model_dir PP-OCRv5_mobile_det
+// paddlex --paddle2onnx --paddle_model_dir ~/.paddlex/official_models/PP-OCRv5_mobile_rec --onnx_model_dir PP-OCRv5_mobile_rec
+// pnnx PP-OCRv5_mobile_det.onnx inputshape=[1,3,320,320] inputshape2=[1,3,256,256]
+// pnnx PP-OCRv5_mobile_rec.onnx inputshape=[1,3,48,160] inputshape2=[1,3,48,256]
+// pnnx PP-OCRv5_server_det.onnx inputshape=[1,3,320,320] inputshape2=[1,3,256,256] fp16=0
+// pnnx PP-OCRv5_server_rec.onnx inputshape=[1,3,48,160] inputshape2=[1,3,48,256] fp16=0
+// convert to buffer ussing ncnn2mem
+
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
@@ -7,7 +19,9 @@
 #include "net.h"
 
 #include "PP_OCRv5_mobile_det.mem.h"
+#include "PP_OCRv5_mobile_rec_opt_int8.mem.h"
 #include "PP_OCRv5_mobile_det.id.h"
+#include "PP_OCRv5_mobile_rec_opt_int8.id.h"
 #include "PP_OCRv5_mobile_rec.mem.h"
 #include "PP_OCRv5_mobile_rec.id.h"
 
@@ -198,7 +212,6 @@ void PPOCRv5::deinit()
 
 void PPOCRv5::init()
 {
-    // no-OpenCV build keeps Vulkan off by default for wider compatibility.
     ppocrv5_det.opt.use_vulkan_compute = false;
 #if NCNN_VULKAN
     ppocrv5_det.opt.use_vulkan_compute = true;
@@ -210,8 +223,8 @@ void PPOCRv5::init()
 #if NCNN_VULKAN
     ppocrv5_rec.opt.use_vulkan_compute = true;
 #endif // NCNN_VULKAN
-    ppocrv5_rec.load_param(PP_OCRv5_mobile_rec_ncnn_param_bin);
-    ppocrv5_rec.load_model(PP_OCRv5_mobile_rec_ncnn_bin);
+    ppocrv5_rec.load_param(PP_OCRv5_mobile_rec_opt_int8_ncnn_param_bin);
+    ppocrv5_rec.load_model(PP_OCRv5_mobile_rec_opt_int8_ncnn_bin);
 }
 
 void PPOCRv5::detect(const unsigned char* rgb, int img_w, int img_h, std::vector<Object>& objects)
@@ -524,10 +537,10 @@ void PPOCRv5::recognize(const unsigned char* rgb, int img_w, int img_h, Object& 
     in.substract_mean_normalize(mean_vals, norm_vals);
 
     ncnn::Extractor ex = ppocrv5_rec.create_extractor();
-    ex.input(PP_OCRv5_mobile_rec_ncnn_param_id::LAYER_in0, in);
+    ex.input(PP_OCRv5_mobile_rec_opt_int8_ncnn_param_id::LAYER_in0, in);
 
     ncnn::Mat out;
-    ex.extract(PP_OCRv5_mobile_rec_ncnn_param_id::BLOB_out0, out);
+    ex.extract(PP_OCRv5_mobile_rec_opt_int8_ncnn_param_id::BLOB_out0, out);
 
     decode_ctc_text(out, object.text);
 }
