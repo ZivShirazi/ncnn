@@ -18,6 +18,10 @@ cmake --build build-size --config MinSizeRel --target ppocrv5_nocv
 
 - If we only use int8 quantized models, compiling with `-DNCNN_F16C=OFF` can also decrease binary size by 0.1MB.
 
+#### .exe vs .lib
+
+The sizes documented above are for an `.exe` binary.  
+A compilation for `.lib` will be larger, but when we will link it with another exe\dll that will use it, the size added should be equal or less then the `.exe` size (we might need to add `/GL` flag to the `.lib` + `.dll`, and `/LTCG` flag to the `.dll`)
 
 ### Flags meanings
 
